@@ -1,0 +1,367 @@
+---
+title: "Monte-Carlo Project"
+author: "Alexandre Benharrats et Anouk Ruer"
+date: "2023-12-19"
+output:
+  html_document: default
+  pdf_document: default
+---
+# Projet de Monte-Carlo
+
+
+## Paramètres
+
+```{r}
+n = 500 #nombre de termes dans la somme ATn 
+m = 1000 #nombre de simulations Monte-Carlo
+
+#Paramètres 
+sigma =1/4
+r = 0
+K = 1
+
+Z = rnorm(n)
+```
+
+
+## Question 1
+
+#### Discrétisation du temps
+
+```{r}
+T = 1 
+t = rep(T/n,n)*seq(1,n) 
+t=c(0,t)
+```
+
+
+#### Simulation Mouvement Brownien
+
+```{r}
+Mouv_B = function(n,t,Z){
+  W=c(0)
+  i=1 
+  while(i<n){
+    W=c(W,W[i]+sqrt(t[i+1]-t[i])*Z[i+1])
+    i=i+1
+  }
+  return (W) }
+
+W = Mouv_B (n,t,Z)
+plot(W, type="l")
+```
+
+
+#### Simulation Prix de l'actif S
+
+```{r}
+St = function(n,t,sigma,r,Z){
+  S=c(1)
+  i=1
+  while(i < n){
+    S=c(S,S[i]*exp((r-(sigma^2)/2)*(t[i+1]-t[i])+sigma*sqrt(t[i+1]-t[i])*Z[i+1]))
+    i=i+1
+  }
+  return (S)
+}
+
+S = St (n,t,sigma,r,Z) 
+plot(S, type="l")
+```
+
+
+#### Estimation du prix E[G] de l'option Asiatique par la méthode MC
+
+```{r}
+# "Option_Asiatique_MC" renvoie le vecteur des simulations de ATn
+
+Option_Asiatique_MC = function(n,m,sigma,r,K,Z){
+  
+  #n = nombre de termes pour la somme ATn (ie discretisation de la grille entre 0 et T)
+  #m nombre de simu pour la methode MC (ie taille du vecteur ATn)
+  
+  #On utilise Z = rnorm(n*m) , un vecteur de n*m simulations de N(0,1) 
+  
+  #On met sous forme de matrice de m colonnes
+  
+  Matrice_Normale = matrix(Z, nrow=n) 
+  
+  #Chaque colonne va representer 1 simu de AnT pour MC 
+  
+  #On transforme chaque colonne de n simu de N(0,1) en colonne de n simu de St
+  
+  Matrice_St = apply(Matrice_Normale, 2, function (col) { St(n,t,sigma,r,col) })
+  
+  #On somme par ligne (au sens ou on prend chaque vecteur colonne et on somme ses elements) : 
+  #chaque colonne represente 1 simu de AnT pour MC
+  
+  ATn = (1/n)*colSums(Matrice_St) 
+  
+  #Vecteur ou on remplace les < 0 par 0 
+  
+  G=pmax(ATn-K,0) 
+  
+  return(G) 
+  
+}
+
+#"Prix_Option_Asiatique_MC" renvoie le prix de l'option estimé par la methode de MC et la variance
+
+Prix_Option_Asiatique_MC = function(G){
+  
+  return(data.frame(value = mean(G), var = var(G))) 
+}
+
+#On utilise Z = rnorm(n*m) , un vecteur de n*m simulations de N(0,1) 
+
+print(Prix_Option_Asiatique_MC(Option_Asiatique_MC(n, m, sigma, r, K, rnorm(n*m))))
+```
+## Question 2
+
+#### Calcul par la méthode des variables antithétiques
+
+```{r}
+Prix_Option_Asiatique_antithetique = function(n,m,sigma,r,K) {
+  
+  #n = nombre de termes pour la somme ATn (ie discretisation de la grille entre 0 et T)
+  #m nombre de simu pour la methode MC (ie taille du vecteur des ATn)
+  
+  #On utilise Z = rnorm(n*m) , un vecteur de n*m simulations de N(0,1) 
+  
+  Z = rnorm(n*m)
+  
+  G1 = Option_Asiatique_MC(n,m,sigma,r,K,Z)
+  
+  
+  #Simu avec variable Antitétique = -Z
+  
+  G2 = Option_Asiatique_MC(n,m,sigma,r,K,-Z)
+  
+  return(data.frame(value = (1/2)*(mean(G1) + mean(G2)) , var = var( (1/2)* (G1 + G2) )))
+  
+}
+
+print(Prix_Option_Asiatique_antithetique(n,m,sigma,r,K))
+
+#On constate que la variance a bien été réduite
+```
+## Question 3
+
+#### Calcul de l'esperance
+
+$$
+Pour\ Z^* \stackrel{Loi}}{=} N(0, \theta^2) \ avec\ \theta^2 := \frac{T \sigma^2 (n+1)(2n+1)}{6n^2} \\
+
+\begin{align*}
+\mathbb{E}\left[\left(\prod_{i=1}^{n} S_{t_i}^{1/n} - K\right)^+\right] &= S_0 \exp\left(\frac{T(n+1)}{2n}\left(r - \frac{\sigma^2}{2}\right) + \frac{\theta^2}{2} \right) \cdot P(Z^* \geq \log\left(\frac{K}{S_0 \exp\left(\frac{T(n+1)}{2n}\left(r - \frac{\sigma^2}{2}\right)\right)}\right)-\theta^2) \\
+&\quad - K \mathbb{P}\left(Z^* \geq \log\left(\frac{K}{S_0 \exp\left( \frac{T(n+1)}{2n} \left(r-\frac{\sigma^2}{2}\right)\right)}\right)\right)
+\end{align*}
+$$
+
+```{r}
+S_0 = S[1]
+
+calcul_Esperance <- function(S_0, T, n, r, sigma, K) {
+  
+  #Calcul de la variance theta^2
+  theta_sq <- (T * sigma^2 * (n + 1) * (2 * n + 1)) / (6 * n^2)
+  
+  constante <- S_0 * exp( T*(n+1)/(2*n) * (r - (sigma^2) / 2) + theta_sq / 2)
+  proba1 <- pnorm(log(K / (S_0 * exp(T*(n+1)/(2*n) * (r - sigma^2 / 2)))) - theta_sq, sd = sqrt(theta_sq))
+  proba2 <- pnorm(log(K / (S_0 * exp(T*(n+1)/(2*n) * (r - sigma^2 / 2)))), sd = sqrt(theta_sq))
+  
+  return(constante * (1 - proba1) - K * (1-proba2))
+}
+
+# Utiliser la fonction pour calculer l'expression
+E <- calcul_Esperance(S_0, T, n, r, sigma, K)
+
+# Afficher le résultat
+print(paste("L'espérance de la variable de contrôle est", E))
+```
+#### Calcul par méthode Variable de controle
+
+```{r}
+Prix_Option_Asiatique_VariableControle = function(n,m,sigma,r,K,E) {
+  
+  #n = nombre de termes pour la somme ATn (ie discretisation de la grille entre 0 et T)
+  #m = nombre de simu pour la methode MC (ie taille du vecteur des ATn)
+  #m0 = nombre de simulations pour le b0
+  
+  
+  #------------------------ Estimation du b0 optimal----------------------------
+  m0 = 100
+  #On utilise Z = rnorm(n*m0) , un vecteur de n*m0 simulations de N(0,1) 
+  
+  Z = rnorm(n*m0)
+  
+  X0 = Option_Asiatique_MC(n,m0,sigma,r,K,Z) 
+  
+  
+  #Simu variable de controle Y, on en veut m0
+  
+  Matrice_Normale = matrix(Z, nrow=n) 
+  Matrice_St = apply(Matrice_Normale, 2, function (col) { St(n,t,sigma,r,col) })  
+  
+  Produit_n = apply(Matrice_St, 2, prod)
+  
+  Y0 = pmax(Produit_n^(1/n)-K,0)
+  
+  
+  
+  b0 = -cov(X0,Y0)/var(Y0)
+  
+  
+  #----------------- Estimation par Variable de controle -----------------------
+ 
+  
+  #On utilise Z = rnorm(n*(m-m0)) , un vecteur de n*(m-m0) simulations de N(0,1) 
+  
+  Z = rnorm(n*(m-m0))
+  
+  X = Option_Asiatique_MC(n,(m-m0),sigma,r,K,Z) 
+  
+  
+  #Simu variable de controle Y, on en veut (m-m0)
+  
+  Matrice_Normale = matrix(Z, nrow=n) 
+  Matrice_St = apply(Matrice_Normale, 2, function (col) { St(n,t,sigma,r,col) })  
+  
+  Produit_n = apply(Matrice_St, 2, prod)
+  
+  Y = pmax(Produit_n^(1/n)-K,0)
+  
+  
+    
+  
+  return(data.frame(value = (mean(X + b0*(Y-E)) ) , var = var((X + b0*(Y-E)) )))
+  
+}
+
+print(Prix_Option_Asiatique_VariableControle(n,m,sigma,r,K,E))
+```
+## Question 4
+
+### (a)
+```{r}
+g <- function(n,Z,t,r,sigma,K){
+  return(pmax(mean(St(n,t,sigma,r,Z))-K,0))
+}
+
+G_z <- g(n,rnorm(n),t,r,sigma,K)
+```
+
+### (b)
+$$
+On \ note \ f(z) \ la \ densité \ du \ vecteur \ gaussien \ Z \ de \ loi \ N(0, I_n) : \\
+\begin{align*}
+\mathbb{E}\left[ g(Z) \right] &= \int_{\mathbb{R}^n} g(z) f(z) \, dz \\
+&= \int_{\mathbb{R}^n} g(z) \frac{f(z)}{f(z-\mu)} f(z-\mu) \, dz \\
+&= \int_{\mathbb{R}^n} g(z) \exp\left(\frac{1}{2} \langle \mu, \mu \rangle - \langle z, \mu \rangle\right) f(z-\mu) \, dz \\
+&= \int_{\mathbb{R}^n} g(z+\mu) \exp\left(\frac{1}{2} \langle \mu, \mu \rangle - \langle z, \mu \rangle - \langle \mu, \mu \rangle\right) f(z) \, dz \\
+&= \int_{\mathbb{R}^n} g(z+\mu) \exp\left(-\langle \mu, z \rangle - \frac{1}{2} \langle \mu, \mu \rangle\right) f(z) \, dz \\
+&= \mathbb{E}\left[ g(Z + \mu) \exp\left(-\langle \mu, Z \rangle - \frac{1}{2} \langle \mu, \mu \rangle\right) \right]
+\end{align*}
+$$
+
+### (c)
+
+#### On pose la fonction dont on veut trouver les racines
+
+```{r}
+f <- function(y) {
+  # Initialisation des vecteurs z et S
+  z <- rep(0, n)
+  S <- rep(0, n)
+  
+  # Calcul des vecteurs z et S
+  z[1] <- sigma * sqrt(delta_t) * (y + K)/y
+  S[1] <- S0 * exp(-sigma^2 * t[1] / 2 + sigma * sqrt(delta_t) * z[1])
+  
+  for (j in 2:n) {
+    z[j] <- z[j-1] - sigma *sqrt(delta_t) * S[j-1]/(n*y)
+    S[j] <- S0 * exp(-sigma^2 * t[j] / 2 + sigma * sqrt(delta_t) * sum(z[1:j]))
+  }
+  
+  # Fonction à optimiser (F(y))
+  return(mean(S) - K - y)
+}
+```
+#### On applique une dichotomie
+```{r}
+
+# Méthode de dichotomie
+dichotomy_method <- function(f, a, b, tol = 1e-6, max_iter = 1000) {
+  iter <- 0
+  while ((b - a) / 2 > tol && iter < max_iter) {
+    c <- (a + b) / 2
+    if (f(c) == 0) {
+      return(c)
+    }
+    if (f(c) * f(a) < 0) {
+      b <- c
+    } else {
+      a <- c
+    }
+    iter <- iter + 1
+  }
+  return((a + b) / 2)
+}
+
+```
+#### Soit $\hat{y}$ la solution trouvée.
+```{r}
+delta_t <- T / n
+S0 <- 1
+
+y_hat <- dichotomy_method(f, -1, 2)
+
+
+```
+#### Notons $\mu^*$ le vecteur $z(\hat{y})$. Il est obtenu en évaluant $z(y)$ avec $y = \hat{y}$. Ainsi, $\mu^* = z(\hat{y})$.
+```{r}
+# Fonction pour calculer z(y) pour un vecteur y
+calculate_z <- function(y, sigma, delta_t, K, n) {
+  z_values <- numeric(n)
+  
+  # Calcul des valeurs de z
+  z_values[1] <- sigma* sqrt(delta_t) * (y + K) / y
+  
+  for (j in 2:n) {
+    S_j <- S0 * exp(-sigma^2 * t[j] / 2 + sigma * sqrt(delta_t) * sum(z_values[1:j]))
+    z_values[j] <- z_values[j - 1] - sigma *sqrt(delta_t)* S_j/(n*y)
+  }
+  
+  return(z_values)
+}
+
+
+# Calcul de z(y_hat)
+z_y_hat <- calculate_z(y_hat, sigma, delta_t, K, n)
+
+mu <- z_y_hat
+```
+#### Alors l'estimation du prix E[G] de l'option Asiatique par un estimateur préférentiel donne : 
+```{r}
+Prix_Option_Asiatique_preferentiel <- function(n, m, sigma, r, K, mu) {
+  
+  # Générer des échantillons selon la distribution N(0, I_n)
+  matrice_normale <- matrix(rnorm(n * m), ncol = m)
+  
+  d <- numeric(n)
+  
+  # Calculer g(Z + mu) pour chaque échantillon, la densité associée, et h(Z)
+  d[1]<- g(n,matrice_normale[,1]+mu,t,r,sigma,K)  * exp(-0.5 * sum((mu *matrice_normale[,1])) - 0.5 * sum(mu^2))
+  for (i in 2:m){
+    g_values <- g(n,matrice_normale[,i]+mu,t,r,sigma,K)
+    d[i] <- g_values*exp(-sum((mu *matrice_normale[,i])) - 0.5 * sum(mu^2))
+  }
+  return(data.frame(value = mean(d) , var = var(d)))
+}
+
+
+# Utilisation de la fonction pour la méthode d'échantillonnage préférentiel
+
+print(Prix_Option_Asiatique_preferentiel(n, m, sigma, r, K, z_y_hat))
+```
+
